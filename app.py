@@ -11,6 +11,7 @@ from dotenv import load_dotenv #No need to add in requiremets
 from functools import reduce #No need to add in requiremets
 load_dotenv()
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 last_video_path = None
 INPUT_SIZE = (180, 180)
 UPLOAD_FOLDER = 'static/videos'
