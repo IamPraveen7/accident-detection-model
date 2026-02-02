@@ -4,6 +4,7 @@ import time
 from redmail import EmailSender
 from werkzeug.utils import secure_filename #No need to add in requiremets
 import os #No need to add in requiremets
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow as tf
 import cv2 
 import numpy as np
@@ -11,7 +12,6 @@ from dotenv import load_dotenv #No need to add in requiremets
 from functools import reduce #No need to add in requiremets
 load_dotenv()
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 last_video_path = None
 INPUT_SIZE = (180, 180)
 UPLOAD_FOLDER = 'static/videos'
