@@ -8,12 +8,12 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
+import tflite_runtime.interpreter as tflite
 import cv2 
 import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
 from functools import reduce
-import gc
 
 last_video_path = None
 INPUT_SIZE = (180, 180)
@@ -22,7 +22,22 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Load trained model ONLY ONCE (critical)
 model = tf.keras.models.load_model("accident_detection_model.keras")
-print("Model loaded Succefully")
+# Convert to TFLite
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+converter.optimizations = [tf.lite.Optimize.DEFAULT]  # reduces size & RAM
+
+tflite_model = converter.convert()
+
+# Save
+with open("accident_detection_model.keras", "wb") as f:
+    f.write(tflite_model)
+
+print("TFLite model saved Succefully")
+interpreter = tflite.Interpreter(model_path="accident_detection_model.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 app = Flask(__name__)
 
@@ -92,6 +107,16 @@ def predict_accident(video_path, recipients, latitude, longitude):
 
     return {label : float(avg_pred)}
     
+#tflite predit
+def tflite_predict(frame):
+    frame = np.expand_dims(frame, axis=0).astype(np.float32)
+
+    interpreter.set_tensor(input_details[0]['index'], frame)
+    interpreter.invoke()
+
+    prob = interpreter.get_tensor(output_details[0]['index'])[0][0]
+    return float(prob)
+
 #Preprocess the input video
 def preprocess_video(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -116,10 +141,9 @@ def preprocess_video(video_path):
         batch.append(frame[np.newaxis, :, :, :])
 
         if len(batch) == batch_size:
-            batch_np = np.vstack(batch)
-            probs = model.predict(batch_np, verbose=0).flatten()
-
-            predictions.extend(probs)
+            for frame in batch_np:
+                prob = tflite_predict(frame)
+                predictions.append(prob)
 
             # 🚨 EARLY STOP
             if np.max(probs) >= 0.9:
@@ -127,6 +151,10 @@ def preprocess_video(video_path):
                 break
 
             batch.clear()
+        if len(predictions) >= 10 and np.mean(predictions[-5:]) > 0.85:
+            print("Early stop (confidence stable)")
+            break
+
     
     cap.release()
     del batch, batch_np, frame
