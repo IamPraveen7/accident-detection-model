@@ -7,8 +7,7 @@ import os
 #Force CPU & reduce TensorFlow memory usage
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-import tensorflow as tf
-import tflite_runtime.interpreter as tflite
+import tensorflow.lite as tf
 import cv2 
 import numpy as np
 from dotenv import load_dotenv
@@ -20,19 +19,6 @@ INPUT_SIZE = (180, 180)
 UPLOAD_FOLDER = 'static/videos'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Load trained model ONLY ONCE (critical)
-model = tf.keras.models.load_model("accident_detection_model.keras")
-# Convert to TFLite
-converter = tf.lite.TFLiteConverter.from_keras_model(model)
-converter.optimizations = [tf.lite.Optimize.DEFAULT]  # reduces size & RAM
-
-tflite_model = converter.convert()
-
-# Save
-with open("accident_detection_model.keras", "wb") as f:
-    f.write(tflite_model)
-
-print("TFLite model saved Succefully")
 interpreter = tflite.Interpreter(model_path="accident_detection_model.tflite")
 interpreter.allocate_tensors()
 
