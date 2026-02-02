@@ -1,23 +1,26 @@
-import datetime #No need to add in requiremets
+import datetime
 from flask import Flask, render_template, request, after_this_request
 import time
 from redmail import EmailSender
-from werkzeug.utils import secure_filename #No need to add in requiremets
-import os #No need to add in requiremets
+from werkzeug.utils import secure_filename
+import os
+#Force CPU & reduce TensorFlow memory usage
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
 import cv2 
 import numpy as np
-from dotenv import load_dotenv #No need to add in requiremets
-from functools import reduce #No need to add in requiremets
+from dotenv import load_dotenv
 load_dotenv()
+from functools import reduce
+import gc
 
 last_video_path = None
 INPUT_SIZE = (180, 180)
 UPLOAD_FOLDER = 'static/videos'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Load already learnt model
+# Load trained model ONLY ONCE (critical)
 model = tf.keras.models.load_model("accident_detection_model.keras")
 print("Model loaded Succefully")
 
@@ -98,8 +101,10 @@ def preprocess_video(video_path):
 
     predictions =[]
     batch = []
+    frame_step = 3
+    batch_size = 2
 
-    for sec in range(int(duration)):
+    for sec in range(0, int(duration), frame_step):
         cap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000)
         success, frame = cap.read()
         if not success:
@@ -110,7 +115,7 @@ def preprocess_video(video_path):
         frame = frame / 255.0 # Normalize
         batch.append(frame[np.newaxis, :, :, :])
 
-        if len(batch) == 3:
+        if len(batch) == batch_size:
             batch_np = np.vstack(batch)
             probs = model.predict(batch_np, verbose=0).flatten()
 
@@ -124,6 +129,8 @@ def preprocess_video(video_path):
             batch.clear()
     
     cap.release()
+    del batch, batch_np, frame
+    gc.collect()
     return predictions
     
 #trigger emails
