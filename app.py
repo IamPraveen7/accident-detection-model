@@ -110,7 +110,7 @@ def preprocess_video(video_path):
         frame = frame / 255.0 # Normalize
         batch.append(frame[np.newaxis, :, :, :])
 
-        if len(batch) == 5:
+        if len(batch) == 3:
             batch_np = np.vstack(batch)
             probs = model.predict(batch_np, verbose=0).flatten()
 
