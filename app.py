@@ -7,19 +7,20 @@ import os
 #Force CPU & reduce TensorFlow memory usage
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-import tensorflow.lite as tf
+import tensorflow as tf
 import cv2 
 import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
 from functools import reduce
+import gc
 
 last_video_path = None
 INPUT_SIZE = (180, 180)
 UPLOAD_FOLDER = 'static/videos'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-interpreter = tflite.Interpreter(model_path="accident_detection_model.tflite")
+interpreter = tf.lite.Interpreter(model_path="accident_detection_model.tflite")
 interpreter.allocate_tensors()
 
 input_details = interpreter.get_input_details()
@@ -95,8 +96,6 @@ def predict_accident(video_path, recipients, latitude, longitude):
     
 #tflite predit
 def tflite_predict(frame):
-    frame = np.expand_dims(frame, axis=0).astype(np.float32)
-
     interpreter.set_tensor(input_details[0]['index'], frame)
     interpreter.invoke()
 
@@ -123,16 +122,16 @@ def preprocess_video(video_path):
 
         #preprocess frame
         frame = cv2.resize(frame, INPUT_SIZE)
-        frame = frame / 255.0 # Normalize
+        frame = frame.astype('float32') / 255.0 # Normalize
         batch.append(frame[np.newaxis, :, :, :])
 
         if len(batch) == batch_size:
-            for frame in batch_np:
+            for frame in batch:
                 prob = tflite_predict(frame)
                 predictions.append(prob)
 
             # 🚨 EARLY STOP
-            if np.max(probs) >= 0.9:
+            if np.max(predictions) >= 0.9:
                 print("Early stop (batch)")
                 break
 
@@ -143,7 +142,7 @@ def preprocess_video(video_path):
 
     
     cap.release()
-    del batch, batch_np, frame
+    del batch, frame
     gc.collect()
     return predictions
     
