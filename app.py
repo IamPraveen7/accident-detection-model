@@ -1,7 +1,5 @@
 import datetime
-from flask import Flask, render_template, request, after_this_request
-import time
-from redmail import EmailSender
+from flask import Flask, render_template, request
 from werkzeug.utils import secure_filename
 import os
 #Force CPU & reduce TensorFlow memory usage
@@ -11,10 +9,13 @@ import tensorflow as tf
 import cv2 
 import numpy as np
 from dotenv import load_dotenv
-load_dotenv()
 from functools import reduce
 import gc
+from threading import Thread
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
+load_dotenv()
 last_video_path = None
 INPUT_SIZE = (180, 180)
 UPLOAD_FOLDER = 'static/videos'
@@ -60,16 +61,23 @@ def detect():
     if request.method == 'POST':
         latitude = request.form.get("latitude")
         longitude = request.form.get("longitude")
+        # input video
         videofile = request.files['photage']
+        # input emails
         recipients_from_form = request.form.get('recipients')
         
         fname = secure_filename(videofile.filename)
         video_path = os.path.join(UPLOAD_FOLDER, fname)
         last_video_path = video_path
         videofile.save(video_path)
-        request.video_path = video_path
+        recipients = [e.strip() for e in recipients_from_form.split(',') if e.strip()]
 
-        recipients = [email.strip() for email in recipients_from_form.split(',') if email.strip()]
+        # # Run function in background Asynchronously
+        # Thread(
+        #     target=background_process,
+        #     args=(video_path, recipients, latitude, longitude),
+        #     daemon=True
+        # ).start()
 
         result = predict_accident(video_path, recipients, latitude, longitude)
         if type(result) != dict:
@@ -77,7 +85,24 @@ def detect():
         else:
             output = f"{(list(result.keys())[0])} with {(list(result.values())[0]) * 100:.1f}% chance" if list(result.keys())[0] == "🚨 Accident Detected" else f"{(list(result.keys())[0])}"
 
-    return render_template('index.html', file_path=video_path, out=output)
+    # 🚀 IMMEDIATE RESPONSE
+    return render_template(
+        'index.html',
+        file_path=video_path,
+        out=output
+    )
+
+# Thread method for Asynchronous function execution
+def background_process(video_path, recipients, latitude, longitude):
+    try:
+        predict_accident(video_path, recipients, latitude, longitude)
+    except Exception as e:
+        print("Background error:", e)
+    finally:
+        # ALWAYS delete video
+        if os.path.exists(video_path):
+            os.remove(video_path)
+            print("Deleted:", video_path)
 
 #Prediction by taking video as input
 def predict_accident(video_path, recipients, latitude, longitude):
@@ -93,28 +118,19 @@ def predict_accident(video_path, recipients, latitude, longitude):
         send_alerts(float(avg_pred), recipients, latitude, longitude)
 
     return {label : float(avg_pred)}
-    
-#tflite predit
-def tflite_predict(frame):
-    interpreter.set_tensor(input_details[0]['index'], frame)
-    interpreter.invoke()
-
-    prob = interpreter.get_tensor(output_details[0]['index'])[0][0]
-    return float(prob)
 
 #Preprocess the input video
 def preprocess_video(video_path):
     cap = cv2.VideoCapture(video_path)
     frame_rate = int(cap.get(cv2.CAP_PROP_FPS)) or 1
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / frame_rate
+    # total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # duration = total_frames / frame_rate
 
     predictions =[]
-    batch = []
-    frame_step = 3
-    batch_size = 2
+    frame_step = 2
 
-    for sec in range(0, int(duration), frame_step):
+    sec = 0
+    while sec < 10:  # MAX 10 seconds
         cap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000)
         success, frame = cap.read()
         if not success:
@@ -123,27 +139,24 @@ def preprocess_video(video_path):
         #preprocess frame
         frame = cv2.resize(frame, INPUT_SIZE)
         frame = frame.astype('float32') / 255.0 # Normalize
-        batch.append(frame[np.newaxis, :, :, :])
+        frame = frame[np.newaxis, :, :, :]
 
-        if len(batch) == batch_size:
-            for frame in batch:
-                prob = tflite_predict(frame)
-                predictions.append(prob)
+        #using tflite for predictions
+        interpreter.set_tensor(input_details[0]['index'], frame)
+        interpreter.invoke()
+        prob = interpreter.get_tensor(output_details[0]['index'])[0][0]
+        predictions.append(prob)
 
-            # 🚨 EARLY STOP
-            if np.max(predictions) >= 0.9:
-                print("Early stop (batch)")
-                break
-
-            batch.clear()
-        if len(predictions) >= 10 and np.mean(predictions[-5:]) > 0.85:
-            print("Early stop (confidence stable)")
+        # 🚨 early stop
+        if prob > 0.9:
             break
 
+        sec += frame_step
     
     cap.release()
-    del batch, frame
+    del frame
     gc.collect()
+
     return predictions
     
 #trigger emails
@@ -180,21 +193,16 @@ def send_alerts(avg_pred, recipients, lt, lg):
 
 #Send emails
 def send_mail(subject, html_body, recipients):
-
-    email = EmailSender(
-        host="smtp.gmail.com",
-        port=587,
-        username=os.getenv("GMAIL_USER"),
-        password=os.getenv("GMAIL_APP_PASSWORD"),
-        use_starttls=True
-    )
-
-    email.send(
+    message = Mail(
+        from_email=os.getenv('SENDGRID_SENDER'),
+        to_emails=recipients,
         subject=subject,
-        receivers=recipients,
-        html=html_body,
-        text="This is a real-time accident alert."
-    )
+        html_content=html_body)
+    try:
+        sg = SendGridAPIClient(os.getenv('SENDGRID_API_KEY'))
+        sg.send(message)
+    except Exception as e:
+        print("sendgrid Error: ",e)
 
 if __name__ == "__main__" :
     app.run(debug=True)
